@@ -1,13 +1,15 @@
-// Simple HTTP server in C with PHP support
-// Compile: gcc server.c -o server
-// Run: ./server
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -77,6 +79,21 @@ void handle_client(int client) {
     if (strcmp(path, "/") == 0) {
         snprintf(file_path, sizeof(file_path), "%s/index.html", HOST_DIR);
     }
+    // Fallback jika file tidak ditemukan dan tidak ada ekstensi
+    int has_ext = strstr(path, ".") != NULL;
+    FILE *fp = fopen(file_path, "rb");
+    if (!fp && !has_ext && strcmp(path, "/") != 0) {
+        // Coba tambahkan .html
+        snprintf(file_path, sizeof(file_path), "%s%s.html", HOST_DIR, path);
+        fp = fopen(file_path, "rb");
+        if (fp) {
+            serve_file(client, file_path, "text/html");
+            fclose(fp);
+            return;
+        }
+    } else if (fp) {
+        fclose(fp);
+    }
     if (strstr(path, ".php")) {
         serve_php(client, file_path);
     } else if (strstr(path, ".html")) {
@@ -94,8 +111,19 @@ int main() {
     int server_fd, client_fd;
     struct sockaddr_in addr;
     int opt = 1;
+#ifdef _WIN32
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
+        printf("WSAStartup failed\n");
+        return 1;
+    }
+#endif
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
+#ifdef _WIN32
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#else
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(PORT);
@@ -106,8 +134,17 @@ int main() {
         socklen_t addrlen = sizeof(addr);
         client_fd = accept(server_fd, (struct sockaddr*)&addr, &addrlen);
         handle_client(client_fd);
+#ifdef _WIN32
+        closesocket(client_fd);
+#else
         close(client_fd);
+#endif
     }
+#ifdef _WIN32
+    closesocket(server_fd);
+    WSACleanup();
+#else
     close(server_fd);
+#endif
     return 0;
 }
